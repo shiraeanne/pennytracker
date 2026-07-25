@@ -1,4 +1,3 @@
-
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -2775,8 +2774,8 @@ function initChatbot(){
         <div id="chat-messages"></div>
         <div id="chat-img-preview-slot"></div>
         <div id="chat-input-row">
-          <label id="chat-attach" aria-label="Attach receipt photo">
-            📎<input type="file" accept="image/*" capture="environment" id="chat-file-input" />
+          <label id="chat-attach" aria-label="Attach receipt photo or PDF">
+            📎<input type="file" accept="image/*,application/pdf" id="chat-file-input" />
           </label>
           <input id="chat-input" type="text" placeholder="e.g. spent $12 on lunch at kopitiam"
             autocomplete="off" inputmode="text" />
@@ -2797,14 +2796,20 @@ function initChatbot(){
   fileInput.addEventListener('change', async e => {
     const file = e.target.files[0];
     if (!file) return;
+    const isPdf = file.type === 'application/pdf';
     const dataUrl = await new Promise(res => {
       const r = new FileReader();
       r.onload = () => res(r.result);
       r.readAsDataURL(file);
     });
     const base64 = dataUrl.split(',')[1];
-    pendingImage = { base64, mediaType: file.type || 'image/jpeg', dataUrl };
-    previewSlot.innerHTML = `
+    pendingImage = { base64, mediaType: file.type || 'image/jpeg', dataUrl, isPdf, fileName: file.name };
+    previewSlot.innerHTML = isPdf ? `
+      <div class="chat-img-preview">
+        <span style="font-size:22px;width:34px;text-align:center">📄</span>
+        <span>${escHtmlLite(file.name)} attached — tap send</span>
+        <span class="cip-x" onclick="clearChatImage()">✕</span>
+      </div>` : `
       <div class="chat-img-preview">
         <img src="${dataUrl}" alt="receipt preview" />
         <span>Receipt photo attached — tap send</span>
@@ -2813,13 +2818,14 @@ function initChatbot(){
     fileInput.value = '';
     input.focus();
   });
+  function escHtmlLite(s){ const d=document.createElement('div'); d.textContent=s; return d.innerHTML; }
 
   window.clearChatImage = function(){
     pendingImage = null;
     previewSlot.innerHTML = '';
   };
 
-  appendBot("Hey! 👋 Just tell me what you spent, or snap a receipt photo 📎 and I'll log it automatically.<br><br>Try something like:<br>• <i>\"Grabbed a $4.50 kopi this morning\"</i><br>• <i>\"Paid $45 for Grab to airport\"</i><br>• Tap 📎 to attach a receipt photo");
+  appendBot("Hey! 👋 Just tell me what you spent, or attach a receipt photo/PDF 📎 and I'll log it automatically.<br><br>Try something like:<br>• <i>\"Grabbed a $4.50 kopi this morning\"</i><br>• <i>\"Paid $45 for Grab to airport\"</i><br>• Tap 📎 to attach a receipt photo or PDF statement");
 
   input.addEventListener('keydown', e => { if(e.key==='Enter' && !e.shiftKey){ e.preventDefault(); sendChat(); } });
 
@@ -2841,7 +2847,7 @@ function initChatbot(){
     if(!text && !img) return;
 
     if (img) {
-      appendUser(text || 'Sent a receipt photo', img.dataUrl);
+      appendUser(text || (img.isPdf ? `Sent a PDF: ${img.fileName}` : 'Sent a receipt photo'), img.isPdf ? null : img.dataUrl, img.isPdf ? img.fileName : null);
       previewSlot.innerHTML = '';
       pendingImage = null;
     } else {
@@ -2854,9 +2860,13 @@ function initChatbot(){
     try {
       const userContent = [];
       if (img) {
-        userContent.push({ type:'image', source:{ type:'base64', media_type: img.mediaType, data: img.base64 } });
+        if (img.isPdf) {
+          userContent.push({ type:'document', source:{ type:'base64', media_type:'application/pdf', data: img.base64 } });
+        } else {
+          userContent.push({ type:'image', source:{ type:'base64', media_type: img.mediaType, data: img.base64 } });
+        }
       }
-      userContent.push({ type:'text', text: text || 'Read this receipt and extract the expense.' });
+      userContent.push({ type:'text', text: text || (img && img.isPdf ? 'Read this PDF statement/receipt and extract the expense(s).' : 'Read this receipt and extract the expense.') });
 
       const res = await fetch('https://api.anthropic.com/v1/messages',{
         method:'POST',
@@ -2939,9 +2949,10 @@ Currency: extract numeric amount only. If currency is SGD/MYR/USD/RM/$, just use
     if(typeof updateBalance==='function') updateBalance();
   }
 
-  function appendUser(text, imgUrl){
+  function appendUser(text, imgUrl, pdfName){
     const imgHtml = imgUrl ? `<img class="chat-img" src="${imgUrl}" alt="attached receipt" />` : '';
-    msgs.insertAdjacentHTML('beforeend',`<div class="chat-msg user"><div class="msg-bubble">${escHtml(text)}${imgHtml}</div></div>`);
+    const pdfHtml = pdfName ? `<div style="display:flex;align-items:center;gap:6px;margin-top:6px;background:rgba(255,255,255,.25);padding:6px 10px;border-radius:10px;font-size:12px">📄 ${escHtml(pdfName)}</div>` : '';
+    msgs.insertAdjacentHTML('beforeend',`<div class="chat-msg user"><div class="msg-bubble">${escHtml(text)}${imgHtml}${pdfHtml}</div></div>`);
     scrollBottom();
   }
   function appendBot(html){
@@ -3648,3 +3659,12 @@ document.getElementById('form-currency-sym').textContent=state.currency;
 </script>
 </body>
 </html>
+
+
+
+ 
+  
+
+   
+   
+    
