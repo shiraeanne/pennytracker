@@ -15,7 +15,7 @@
 <meta name="description" content="Your kawaii personal finance companion">
 <meta name="application-name" content="Penny">
 
-<link href="https://fonts.googleapis.com/css2?family=Nunito:wght@400;600;700;800;900&family=Pacifico&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Nunito:wght@400;600;700;800;900&family=Pacifico&display=swap" rel="stylesheet" crossorigin="anonymous">
 <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
 <style>
@@ -2855,18 +2855,36 @@ function initChatbot(){
     }
     input.value = '';
     sendBtn.disabled = true;
-    const typingEl = appendTyping();
 
+    /* ── TEXT-ONLY: parse locally, no network needed ── */
+    if (!img) {
+      const typingEl = appendTyping();
+      setTimeout(() => {
+        typingEl.remove();
+        const parsed = parseExpenseLocally(text);
+        if (!parsed.understood) {
+          appendBot("Hmm, I couldn't spot an amount in that. Try something like <i>\"spent $8 on lunch\"</i> or <i>\"Grab $12 to office\"</i>. 😊");
+        } else {
+          const cat = CATEGORIES.find(c=>c.id===parsed.category) || CATEGORIES.find(c=>c.id==='others');
+          pendingTxn = { ...parsed, catObj: cat };
+          showConfirmCard(pendingTxn);
+        }
+        sendBtn.disabled = false;
+        input.focus();
+      }, 350); // small delay so the typing indicator is visible
+      return;
+    }
+
+    /* ── IMAGE / PDF: needs Claude vision via the API (only works inside claude.ai) ── */
+    const typingEl = appendTyping();
     try {
       const userContent = [];
-      if (img) {
-        if (img.isPdf) {
-          userContent.push({ type:'document', source:{ type:'base64', media_type:'application/pdf', data: img.base64 } });
-        } else {
-          userContent.push({ type:'image', source:{ type:'base64', media_type: img.mediaType, data: img.base64 } });
-        }
+      if (img.isPdf) {
+        userContent.push({ type:'document', source:{ type:'base64', media_type:'application/pdf', data: img.base64 } });
+      } else {
+        userContent.push({ type:'image', source:{ type:'base64', media_type: img.mediaType, data: img.base64 } });
       }
-      userContent.push({ type:'text', text: text || (img && img.isPdf ? 'Read this PDF statement/receipt and extract the expense(s).' : 'Read this receipt and extract the expense.') });
+      userContent.push({ type:'text', text: text || (img.isPdf ? 'Read this PDF statement/receipt and extract the expense(s).' : 'Read this receipt and extract the expense.') });
 
       const res = await fetch('https://api.anthropic.com/v1/messages',{
         method:'POST',
@@ -2898,7 +2916,7 @@ Currency: extract numeric amount only. If currency is SGD/MYR/USD/RM/$, just use
       try { parsed = JSON.parse(raw.replace(/```json|```/g,'')); } catch(e){ parsed = {understood:false}; }
 
       if(!parsed.understood){
-        appendBot("Hmm, I couldn't spot an expense in that. Try something like <i>\"paid $8 for lunch\"</i> or <i>\"Grab $12 to office\"</i>. 😊");
+        appendBot("Hmm, I couldn't read that clearly. Want to try typing the expense instead? e.g. <i>\"$15 groceries\"</i> 😊");
       } else {
         const cat = CATEGORIES.find(c=>c.id===parsed.category) || CATEGORIES.find(c=>c.id==='others');
         pendingTxn = { ...parsed, catObj: cat };
@@ -2906,11 +2924,48 @@ Currency: extract numeric amount only. If currency is SGD/MYR/USD/RM/$, just use
       }
     } catch(err){
       typingEl.remove();
-      appendBot("Oops, something went wrong. Please try again! 🙏");
+      appendBot("Photo/PDF scanning needs an internet connection to the AI service and only works inside the Claude.ai preview right now. You can still type the expense directly, e.g. <i>\"$15 groceries\"</i> 🙏");
     }
     sendBtn.disabled = false;
     input.focus();
   };
+
+  /* ── Local, offline expense parser (no API needed) ── */
+  function parseExpenseLocally(raw){
+    const text = raw.toLowerCase().trim();
+
+    // 1. Find the amount — first number with optional currency symbol/decimals
+    const amtMatch = text.match(/(?:rm|sgd|usd|\$)?\s*(\d{1,7}(?:[.,]\d{1,2})?)/);
+    if (!amtMatch) return { understood:false };
+    const amount = parseFloat(amtMatch[1].replace(',', '.'));
+    if (isNaN(amount) || amount <= 0) return { understood:false };
+
+    // 2. Determine income vs expense
+    const incomeWords = ['salary','received','income','got paid','refund','bonus','payout','cashback','allowance','payment received','earned'];
+    const type = incomeWords.some(w => text.includes(w)) ? 'income' : 'expense';
+
+    // 3. Match category by keyword
+    let matchedCat = CATEGORIES.find(c => c.keywords.some(k => text.includes(k)));
+    if (!matchedCat) matchedCat = CATEGORIES.find(c => c.id === 'others');
+
+    // 4. Build a clean description — strip amount + currency + filler words
+    let desc = raw
+      .replace(/(?:rm|sgd|usd|\$)?\s*\d{1,7}(?:[.,]\d{1,2})?/i, '')
+      .replace(/\b(spent|paid|for|on|i|just|today|got|bought|buy)\b/gi, '')
+      .replace(/\s+/g, ' ')
+      .trim();
+    if (!desc) desc = matchedCat.label;
+    desc = desc.charAt(0).toUpperCase() + desc.slice(1);
+
+    return {
+      understood: true,
+      type,
+      amount,
+      description: desc,
+      category: matchedCat.id,
+      emoji: matchedCat.emoji
+    };
+  }
 
   window.confirmChatTxn = function(){
     if(!pendingTxn) return;
@@ -3659,6 +3714,10 @@ document.getElementById('form-currency-sym').textContent=state.currency;
 </script>
 </body>
 </html>
+          
+  
+
+  
 
 
 
